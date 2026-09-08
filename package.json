@@ -2,19 +2,20 @@
   "name": "devassess-backend",
   "version": "1.0.0",
   "description": "Developer Assessment & Coding Platform - REST API",
-  "main": "dist/server.js",
+  "main": "dist/src/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "prisma generate && tsc",
-    "start": "node dist/server.js",
-    "vercel-build": "prisma generate && prisma migrate deploy && tsc",
+    "start": "node dist/src/server.js",
+    "vercel-build": "prisma generate",
     "lint": "eslint src --ext .ts",
     "format": "prettier --write \"src/**/*.ts\"",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
-    "db:reset": "prisma migrate reset --force"
+    "db:reset": "prisma migrate reset --force",
+    "postinstall": "prisma generate"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -52,5 +53,8 @@
     "prisma": "^6.19.3",
     "tsx": "^4.20.3",
     "typescript": "^5.9.2"
+  },
+  "engines": {
+    "node": ">=18.x"
   }
 }

@@ -35,7 +35,9 @@ const loginBody = z.object({
 });
 
 const googleBody = z.object({
-  idToken: z.string().min(1, 'idToken is required'),
+  idToken: z
+    .string({ error: 'idToken is required' })
+    .min(1, 'idToken is required'),
   role: selfServiceRole.default('CANDIDATE'),
   companyName: z.string().trim().min(2).max(150).optional(),
 });

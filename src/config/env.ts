@@ -34,6 +34,12 @@ const envSchema = z.object({
   REDIS_URL: z.string().optional(),
 
   CORS_ORIGINS: z.string().default('http://localhost:3000,http://localhost:5173'),
+
+  // Rate limiting. Configurable so a load test or a demo can be run without
+  // editing code, but the defaults are the values that ship.
+  RATE_LIMIT_WINDOW_MINUTES: z.coerce.number().int().min(1).max(60).default(15),
+  RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(100),
+  AUTH_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10),
 });
 
 const parsed = envSchema.safeParse(process.env);

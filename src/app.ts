@@ -7,6 +7,7 @@ import { config } from './config/env';
 import { prisma } from './config/prisma';
 import { globalErrorHandler } from './middlewares/globalErrorHandler';
 import { notFound } from './middlewares/notFound';
+import { authLimiter, globalLimiter } from './middlewares/rateLimiter';
 import { PaymentController } from './modules/payment/payment.controller';
 import routes from './routes';
 import { sendResponse } from './utils/sendResponse';
@@ -70,6 +71,14 @@ app.get('/health', async (_req: Request, res: Response) => {
     },
   });
 });
+
+app.use(globalLimiter);
+
+// Tighter cap on the routes that accept credentials.
+app.use('/api/v1/auth/login', authLimiter);
+app.use('/api/v1/auth/register', authLimiter);
+app.use('/api/v1/auth/refresh-token', authLimiter);
+app.use('/api/v1/auth/google', authLimiter);
 
 app.use('/api/v1', routes);
 

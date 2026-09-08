@@ -23,12 +23,28 @@ export const verifyGoogleIdToken = async (idToken: string): Promise<GoogleIdenti
     ]);
   }
 
-  const ticket = await client.verifyIdToken({
-    idToken,
-    audience: config.GOOGLE_CLIENT_ID,
-  });
+  let payload;
 
-  const payload = ticket.getPayload();
+  try {
+    const ticket = await client.verifyIdToken({
+      idToken,
+      audience: config.GOOGLE_CLIENT_ID,
+    });
+    payload = ticket.getPayload();
+  } catch (error) {
+    /*
+     * Any failure here - malformed token, bad signature, expired, wrong
+     * audience - is the caller presenting a token we will not accept. That is
+     * a 401, not a server fault, and the library's internal wording
+     * ("No pem found for envelope", "Wrong number of segments") is noise to an
+     * API consumer, so the detail is logged rather than returned.
+     */
+    console.error('[google] id token rejected:', (error as Error).message);
+
+    throw new ApiError(StatusCodes.UNAUTHORIZED, 'Google sign-in failed', [
+      { path: 'idToken', message: 'The Google token is invalid, expired, or was issued for a different application' },
+    ]);
+  }
 
   if (!payload?.sub || !payload.email) {
     throw new ApiError(StatusCodes.UNAUTHORIZED, 'Google token did not contain an email', [

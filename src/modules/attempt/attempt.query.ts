@@ -2,6 +2,7 @@ import { AttemptStatus, Prisma, ProblemType, Role } from '@prisma/client';
 import { StatusCodes } from 'http-status-codes';
 import { prisma } from '../../config/prisma';
 import { ApiError } from '../../utils/ApiError';
+import { cache } from '../../utils/cache';
 import { logAudit } from '../../utils/audit';
 import { buildMeta, buildSearchCondition, resolvePagination } from '../../utils/queryBuilder';
 import { PaginationMeta } from '../../utils/sendResponse';
@@ -324,6 +325,8 @@ const evaluateSubmission = async (
       },
     });
   });
+
+  await cache.invalidateAssessment(submission.attempt.assessmentId);
 
   await logAudit({
     actorId: actor.id,

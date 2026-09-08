@@ -9,6 +9,7 @@ import {
 import { StatusCodes } from 'http-status-codes';
 import { prisma } from '../../config/prisma';
 import { ApiError } from '../../utils/ApiError';
+import { cache } from '../../utils/cache';
 import { logAudit } from '../../utils/audit';
 import { buildMeta, buildSearchCondition, resolvePagination } from '../../utils/queryBuilder';
 import { PaginationMeta } from '../../utils/sendResponse';
@@ -265,6 +266,9 @@ const settle = async (
       },
     });
   });
+
+  // A new score changes every aggregate derived from this assessment.
+  await cache.invalidateAssessment(attempt.assessmentId);
 
   void finalStatusWhenExpired;
 };

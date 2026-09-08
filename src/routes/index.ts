@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { AdminRoutes } from '../modules/admin/admin.route';
 import { AssessmentRoutes } from '../modules/assessment/assessment.route';
 import {
   AssessmentAttemptRoutes,
@@ -13,6 +14,10 @@ import {
 } from '../modules/invitation/invitation.route';
 import { CreditPackRoutes, PaymentRoutes } from '../modules/payment/payment.route';
 import { ProblemRoutes } from '../modules/problem/problem.route';
+import {
+  AssessmentAnalyticsRoutes,
+  AttemptResultRoutes,
+} from '../modules/result/result.route';
 import { UserRoutes } from '../modules/user/user.route';
 
 const router = Router();
@@ -28,10 +33,13 @@ const moduleRoutes: { path: string; route: Router }[] = [
   // Registered before /assessments so the nested path wins the match.
   { path: '/assessments/:id/invitations', route: AssessmentInvitationRoutes },
   { path: '/assessments/:id/attempts', route: AssessmentAttemptRoutes },
+  { path: '/assessments/:id', route: AssessmentAnalyticsRoutes },
   { path: '/assessments', route: AssessmentRoutes },
   { path: '/invitations', route: InvitationRoutes },
+  { path: '/attempts/:id/result', route: AttemptResultRoutes },
   { path: '/attempts', route: AttemptRoutes },
   { path: '/submissions', route: SubmissionRoutes },
+  { path: '/admin', route: AdminRoutes },
   { path: '/credit-packs', route: CreditPackRoutes },
   { path: '/payments', route: PaymentRoutes },
   { path: '/credits', route: CreditRoutes },
