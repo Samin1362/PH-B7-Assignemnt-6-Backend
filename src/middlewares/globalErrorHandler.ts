@@ -49,6 +49,20 @@ const handlePrismaKnownError = (
         errors: [{ path: field, message: `Invalid reference for ${field}` }],
       };
     }
+    case 'P2028':
+      // Interactive transaction expired - almost always lock contention under
+      // load, which is retryable rather than a client mistake.
+      return {
+        statusCode: StatusCodes.SERVICE_UNAVAILABLE,
+        message: 'The server is busy, please retry',
+        errors: [{ path: 'transaction', message: 'Transaction timed out waiting on a lock' }],
+      };
+    case 'P2034':
+      return {
+        statusCode: StatusCodes.CONFLICT,
+        message: 'Conflicting concurrent request, please retry',
+        errors: [{ path: 'transaction', message: 'Write conflict or deadlock detected' }],
+      };
     case 'P2014':
       return {
         statusCode: StatusCodes.BAD_REQUEST,
