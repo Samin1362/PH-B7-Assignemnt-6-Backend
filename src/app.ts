@@ -7,6 +7,7 @@ import { config } from './config/env';
 import { prisma } from './config/prisma';
 import { globalErrorHandler } from './middlewares/globalErrorHandler';
 import { notFound } from './middlewares/notFound';
+import { PaymentController } from './modules/payment/payment.controller';
 import routes from './routes';
 import { sendResponse } from './utils/sendResponse';
 
@@ -20,6 +21,17 @@ app.use(
     origin: config.corsOrigins,
     credentials: true,
   }),
+);
+
+/**
+ * Stripe signs the exact bytes it sent, so this route must see the raw body and
+ * therefore has to be mounted BEFORE express.json() replaces it with a parsed
+ * object. Everything after this line receives normal JSON.
+ */
+app.post(
+  '/api/v1/payments/webhook',
+  express.raw({ type: 'application/json' }),
+  PaymentController.webhook,
 );
 
 app.use(express.json({ limit: '1mb' }));
