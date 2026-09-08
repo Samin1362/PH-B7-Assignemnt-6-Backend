@@ -1,3 +1,7 @@
+// DevAssess — Developer Assessment & Coding Platform
+// Companies build a problem bank, assemble timed assessments, spend paid
+// invite credits to invite candidates, and receive auto-scored results.
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -6,4 +10,462 @@ datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------- enums ----
+
+enum Role {
+  CANDIDATE
+  COMPANY
+  ADMIN
+}
+
+enum ProblemType {
+  CODING
+  MCQ
+  WRITTEN
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum AssessmentStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+  ARCHIVED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  EVALUATED
+  EXPIRED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  EXPIRED
+  REFUNDED
+}
+
+enum CreditTxType {
+  PURCHASE
+  CONSUME
+  REFUND
+  ADMIN_ADJUST
+}
+
+// ------------------------------------------------------- identity & auth ----
+
+model User {
+  id        String    @id @default(uuid())
+  email     String    @unique
+  // Null for accounts created through Google — they authenticate upstream.
+  password  String?
+  googleId  String?   @unique
+  name      String
+  avatarUrl String?
+  role      Role      @default(CANDIDATE)
+  isActive  Boolean   @default(true)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  candidateProfile CandidateProfile?
+  companyProfile   CompanyProfile?
+  creditAccount    CreditAccount?
+  refreshTokens    RefreshToken[]
+  auditLogs        AuditLog[]          @relation("AuditActor")
+  problems         Problem[]           @relation("ProblemOwner")
+  assessments      Assessment[]        @relation("AssessmentCompany")
+  payments         Payment[]
+  creditTxns       CreditTransaction[]
+  invitationsSent  Invitation[]        @relation("InvitedBy")
+  invitationsGot   Invitation[]        @relation("InvitationCandidate")
+  attempts         Attempt[]           @relation("CandidateAttempts")
+  evaluations      Submission[]        @relation("SubmissionEvaluator")
+
+  // Listing users by role while excluding soft-deleted rows is the single
+  // hottest admin query, so it gets a composite index.
+  @@index([role, deletedAt])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  // Only the hash is stored, so a database leak cannot mint sessions.
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?
+  ip        String?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@map("refresh_tokens")
+}
+
+model CandidateProfile {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  headline        String?
+  bio             String?
+  skills          String[]
+  experienceYears Int      @default(0)
+  githubUrl       String?
+  linkedinUrl     String?
+  resumeUrl       String?
+  location        String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("candidate_profiles")
+}
+
+model CompanyProfile {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  companyName String
+  website     String?
+  industry    String?
+  companySize String?
+  description String?
+  logoUrl     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("company_profiles")
+}
+
+// ---------------------------------------------------- credits & payments ----
+
+model CreditPack {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  slug        String   @unique
+  credits     Int
+  priceCents  Int
+  currency    String   @default("usd")
+  description String?
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  payments Payment[]
+
+  @@map("credit_packs")
+}
+
+/// One row per company. This is the row locked FOR UPDATE during an invite so
+/// two concurrent invite calls cannot spend the same credit.
+model CreditAccount {
+  id             String   @id @default(uuid())
+  companyId      String   @unique
+  balance        Int      @default(0)
+  totalPurchased Int      @default(0)
+  totalConsumed  Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  company User @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("credit_accounts")
+}
+
+/// Append-only ledger. `balanceAfter` is captured at write time so history
+/// stays auditable even if the account balance later changes.
+model CreditTransaction {
+  id           String       @id @default(uuid())
+  companyId    String
+  type         CreditTxType
+  /// Signed: positive for PURCHASE/REFUND, negative for CONSUME.
+  amount       Int
+  balanceAfter Int
+  description  String?
+  referenceId  String?
+  paymentId    String?
+  createdAt    DateTime     @default(now())
+
+  company User     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  payment Payment? @relation(fields: [paymentId], references: [id])
+
+  @@index([companyId, createdAt])
+  @@index([type])
+  @@map("credit_transactions")
+}
+
+model Payment {
+  id                    String        @id @default(uuid())
+  companyId             String
+  packId                String
+  /// Unique so a replayed Stripe webhook is a no-op rather than a double top-up.
+  stripeSessionId       String        @unique
+  stripePaymentIntentId String?
+  amountCents           Int
+  currency              String        @default("usd")
+  credits               Int
+  status                PaymentStatus @default(PENDING)
+  rawEvent              Json?
+  failureReason         String?
+  paidAt                DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  company            User                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  pack               CreditPack          @relation(fields: [packId], references: [id])
+  creditTransactions CreditTransaction[]
+
+  @@index([companyId, status])
+  @@index([status, createdAt])
+  @@map("payments")
+}
+
+// ------------------------------------------------------------ problem bank ----
+
+model Problem {
+  id          String      @id @default(uuid())
+  ownerId     String
+  title       String
+  slug        String      @unique
+  description String
+  type        ProblemType
+  difficulty  Difficulty  @default(MEDIUM)
+  points      Int         @default(10)
+  tags        String[]
+  language    String?
+  starterCode String?
+  isPublic    Boolean     @default(false)
+  deletedAt   DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  owner              User                @relation("ProblemOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  options            ProblemOption[]
+  testCases          TestCase[]
+  assessmentProblems AssessmentProblem[]
+  submissions        Submission[]
+
+  @@index([ownerId, deletedAt])
+  @@index([type, difficulty])
+  @@index([deletedAt])
+  @@map("problems")
+}
+
+/// MCQ choices. `isCorrect` is stripped in every candidate-facing response.
+model ProblemOption {
+  id        String   @id @default(uuid())
+  problemId String
+  text      String
+  isCorrect Boolean  @default(false)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  problem     Problem      @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  submissions Submission[] @relation("SelectedOption")
+
+  @@index([problemId])
+  @@map("problem_options")
+}
+
+/// Coding scoring. Hidden cases are never returned to a candidate; `weight`
+/// allows partial credit across a suite.
+model TestCase {
+  id             String   @id @default(uuid())
+  problemId      String
+  input          String
+  expectedOutput String
+  isHidden       Boolean  @default(false)
+  weight         Int      @default(1)
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  problem Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+
+  @@index([problemId])
+  @@map("test_cases")
+}
+
+// ------------------------------------------------------------ assessments ----
+
+model Assessment {
+  id              String           @id @default(uuid())
+  companyId       String
+  title           String
+  slug            String           @unique
+  description     String?
+  durationMinutes Int              @default(60)
+  /// Percentage of maxScore a candidate must reach to pass.
+  passingScore    Int              @default(60)
+  status          AssessmentStatus @default(DRAFT)
+  startsAt        DateTime?
+  endsAt          DateTime?
+  publishedAt     DateTime?
+  deletedAt       DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  company     User                @relation("AssessmentCompany", fields: [companyId], references: [id], onDelete: Cascade)
+  problems    AssessmentProblem[]
+  invitations Invitation[]
+  attempts    Attempt[]
+
+  @@index([companyId, status])
+  @@index([status, deletedAt])
+  @@map("assessments")
+}
+
+model AssessmentProblem {
+  id           String   @id @default(uuid())
+  assessmentId String
+  problemId    String
+  order        Int      @default(0)
+  /// Per-assessment override of Problem.points.
+  points       Int
+  createdAt    DateTime @default(now())
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  problem    Problem    @relation(fields: [problemId], references: [id], onDelete: Cascade)
+
+  @@unique([assessmentId, problemId])
+  @@index([assessmentId, order])
+  @@map("assessment_problems")
+}
+
+model Invitation {
+  id           String           @id @default(uuid())
+  assessmentId String
+  email        String
+  /// Linked when the email matches an existing candidate account.
+  candidateId  String?
+  invitedById  String
+  token        String           @unique
+  status       InvitationStatus @default(PENDING)
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+  revokedAt    DateTime?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  invitedBy  User       @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: Cascade)
+  candidate  User?      @relation("InvitationCandidate", fields: [candidateId], references: [id], onDelete: SetNull)
+  attempt    Attempt?
+
+  /// Stops a company from spending two credits inviting the same person twice.
+  @@unique([assessmentId, email])
+  @@index([email, status])
+  @@index([assessmentId, status])
+  @@map("invitations")
+}
+
+// ------------------------------------------------ attempts & submissions ----
+
+model Attempt {
+  id             String        @id @default(uuid())
+  assessmentId   String
+  candidateId    String
+  invitationId   String?       @unique
+  status         AttemptStatus @default(IN_PROGRESS)
+  startedAt      DateTime      @default(now())
+  /// Authoritative deadline computed server-side from durationMinutes.
+  expiresAt      DateTime
+  submittedAt    DateTime?
+  evaluatedAt    DateTime?
+  totalScore     Float         @default(0)
+  maxScore       Float         @default(0)
+  percentage     Float         @default(0)
+  passed         Boolean       @default(false)
+  tabSwitchCount Int           @default(0)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  assessment  Assessment   @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  candidate   User         @relation("CandidateAttempts", fields: [candidateId], references: [id], onDelete: Cascade)
+  invitation  Invitation?  @relation(fields: [invitationId], references: [id])
+  submissions Submission[]
+
+  /// One attempt per candidate per assessment — a double start becomes a clean
+  /// 409 instead of two live timers.
+  @@unique([assessmentId, candidateId])
+  @@index([candidateId, status])
+  @@index([assessmentId, totalScore])
+  @@index([status])
+  @@map("attempts")
+}
+
+model Submission {
+  id               String    @id @default(uuid())
+  attemptId        String
+  problemId        String
+  code             String?
+  language         String?
+  answerText       String?
+  selectedOptionId String?
+  /// Candidate-supplied output, matched against TestCase.expectedOutput.
+  output           String?
+  score            Float     @default(0)
+  maxScore         Float     @default(0)
+  autoScored       Boolean   @default(false)
+  testCasesPassed  Int       @default(0)
+  testCasesTotal   Int       @default(0)
+  evaluatorId      String?
+  feedback         String?
+  evaluatedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  attempt        Attempt        @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  problem        Problem        @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  selectedOption ProblemOption? @relation("SelectedOption", fields: [selectedOptionId], references: [id])
+  evaluator      User?          @relation("SubmissionEvaluator", fields: [evaluatorId], references: [id], onDelete: SetNull)
+
+  /// Lets answer autosave be a plain upsert.
+  @@unique([attemptId, problemId])
+  @@index([attemptId])
+  @@index([problemId])
+  @@map("submissions")
+}
+
+// ----------------------------------------------------------- audit trail ----
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  /// Nullable so the trail survives the actor being deleted.
+  actorId   String?
+  action    String
+  entity    String
+  entityId  String?
+  before    Json?
+  after     Json?
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entity, entityId])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_logs")
 }
